@@ -16,7 +16,9 @@ const _ = require("lodash"); // lodash
 const ejs = require("ejs"); // ejs
 const mongoose = require("mongoose"); // mongoose
 //const encrypt = require("mongoose-encryption"); // mongoose encryption
-const md5 = require("md5"); // hash function (a weak hashing algorithm)
+//const md5 = require("md5"); // hash function (a weak hashing algorithm)
+const bcrypt = require("bcrypt"); // bcrypt hash function 
+const saltRounds = 10; // salt rounds
 const express = require("express"); // express
 
 // create a new application that uses express
@@ -70,20 +72,28 @@ app.get("/register", function(req, res) {
 });
 
 // POST request for the register route (triggers when user clicks submit in the form)
-app.post("/register", function(req, res){
-    // create a mongoose Document for each new user based on the Model 
-    const newUser = new User({ // create a new user 
-        email: req.body.username,
-        password: md5(req.body.password) // convert password to an md5 hash 
-    });
-    // *** during save, documents are encrypted and then signed by Mongoose ***
-    // save the document to database (save new user) 
-    newUser.save(function(err) { // add callback function to handle any errors
-        // if save is complete without errors
-        if (!err) {
-        // users can only access secrets page via a successful login/registration
-        res.redirect("secrets"); // redirect to secrets page
-        }
+app.post("/register", function(req, res) {
+    // use bcrypt as a hashing function and include rounds of salting 
+    bcrypt.hash(req.body.password, saltRounds, function(err, hash) { // callback for hashing
+        // create a mongoose Document for each new user based on the Model
+        const newUser =  new User({ // create a new user 
+          email: req.body.username, 
+          password: hash // req.body.password -> hash & myPlaintextPassword -> req.body.password
+        });
+        // *** during save, documents are encrypted and then signed by Mongoose ***
+        // save the document to database (save new user) 
+        newUser.save(function(err) { // add callback function to handle any errors
+            // if save is unsuccessful 
+            if (err) {
+                // log the error(s)
+                console.log(err);
+            } 
+            // if save is successful
+            else {
+                // users can only access secrets page via a successful login/registration
+                res.render("secrets"); // redirect to secrets page
+            }
+        });
     });
 });
 
@@ -92,7 +102,7 @@ app.post("/register", function(req, res){
 app.post("/login", function(req, res) {
     // grab and store (body-parse) username/password fields from the form
     const username = req.body.username;
-    const password = md5(req.body.password); // hash conversion of password
+    const password = req.body.password; // hash conversion of password
     // *** during find, documents are authenticated and then decrypted by Mongoose ***
     // find a match between the fields entered and the ones already stores in the database
     User.findOne({email: username}, function(err, foundUser) { // add a callback to handle any errors
@@ -105,10 +115,14 @@ app.post("/login", function(req, res) {
             // if a user is found in the database
             if(founderUser) {
                 // if the hashed user password matches the hashed password found in the database
-                if(foundUser.password === password) {
-                    // authentication is successful 
-                    res.render("secrets"); // render the secrets page 
-                }
+                // bcrypt.compare(myPlaintextPassword, hash, function(err, res)){});
+                bcrypt.compare(password, foundUser.password, function(err, result) {
+                    // if a comparison returns a positive match 
+                    if (result === true) {
+                      // authentication is successful   
+                      res.render("secrets"); // render the secrets page 
+                    }
+                });
             }  
         }
     });
