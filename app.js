@@ -1,7 +1,5 @@
-// Secrets Web App - Authentication 
+// Secrets Web App - using level 6 Authentication with Google OAuth 2.0 Social Sign-In Strategy 
 
-// Not requiring all packages (modules) for this application. 
-// Refer to package.json to see which dependencies are used for this project.
 
 // require and configure dotenv needed for an environment-specific variable
 require('dotenv').config(); // needs to be required as early as possible
@@ -10,20 +8,14 @@ require('dotenv').config(); // needs to be required as early as possible
 const port = 3000;
 
 // require modules (packages)
-const https = require("https"); // https
-const { dirname } = require("path"); // path
-const _ = require("lodash"); // lodash
 const express = require("express"); // express
 const ejs = require("ejs"); // ejs
 const mongoose = require("mongoose"); // mongoose
-//const encrypt = require("mongoose-encryption"); // mongoose encryption
-//const md5 = require("md5"); // hash function (a weak hashing algorithm)
-//const bcrypt = require("bcrypt"); // bcrypt hash function 
-//const saltRounds = 10; // salt rounds
 const session = require("express-session"); // session
-const passport = require("passport"); // Passport
-//const passportLocal = require("passport-local"); // not needed (redundant)
-const passportLocalMongoose = require("passport-local-mongoose"); 
+const passport = require("passport"); // passport
+const passportLocalMongoose = require("passport-local-mongoose"); // passport-local-mongoose
+const GoogleStrategy = require("passport-google-oauth20").Strategy; // google oauth
+const findOrCreate = require("mongoose-findorcreate"); // User.findOrCreate()
 
 
 // create a new application that uses express
@@ -59,25 +51,71 @@ mongoose.set("useCreateIndex", true);
 // create a new object from the mongoose Schema class that holds the email and password fields
 const userSchema = new mongoose.Schema ({
     email: String,
-    password: String
+    password: String,
+    googleId: String, // needed for identifying users (who logged in via google) in order to find them locally (database) 
+    secret: String
 }); 
 
 // use plugin for hashing/salting passwords and storing them in the mongoose db
 userSchema.plugin(passportLocalMongoose);
+// add package as a plugin to Schema
+userSchema.plugin(findOrCreate); 
 
 // create users (which will be added to userDB) via the mongoose Model based on userSchema
 const User = mongoose.model("User", userSchema); // "User" becomes "users" behind the scenes
 
-// use "createStrategy" INSTEAD OF "authenticate" (simplified config)
+// use "createStrategy" INSTEAD OF "authenticate" 
 passport.use(User.createStrategy()); // create a local login strategy
-// use static serialize and deserialize of model for passport session support
-passport.serializeUser(User.serializeUser());
-passport.deserializeUser(User.deserializeUser());
+
+// use passport to serialize user instances to and from the session (unique cookie to support the login session)
+passport.serializeUser(function(user, done) { // supports all strategies 
+    done(null, user.id);
+});
+// use passport to deserialize user instances to and from the session 
+passport.deserializeUser(function(id, done) {
+    User.findById(id, function(err, user) {
+        done(err, user);
+    });
+});
+
+
+// configure strategy (Google OAUTH 2.0) when using passport
+passport.use(new GoogleStrategy({
+    clientID: process.env.CLIENT_ID, // GOOGLE_CLIENT_ID
+    clientSecret: process.env.CLIENT_SECRET, // GOOGLE_CLIENT_SECRET
+    callbackURL: "http://localhost:3000/auth/google/secrets", // ".../auth/google/callback"
+    userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo" 
+  },
+  // once google authentication has completed this callback function gets triggered 
+  function(accessToken, refreshToken, profile, cb) { 
+    // not a real mongoose function -> must require 'mongoose-findorcreate' 
+    // to implement psuedo code in order to find/create a user in database
+    User.findOrCreate({ googleId: profile.id }, function (err, user) { // find/create users in database
+      return cb(err, user);
+    });
+  }
+));
 
 // GET request for the home route
 app.get("/", function(req, res) {
     res.render("home");
 });
+
+// GET request for the google authentication route
+app.get("/auth/google",
+    // initiate authentication on google's servers asking for user profile once logged in
+    passport.authenticate("google", { scope: ["profile"] }) // google handles the authentication at this stage
+);
+
+// authorized redirect url - google will redirect user to this route after successful auhentication
+app.get("/auth/google/secrets",
+    // use passport to authenticate users using the google strategy (authentication is handled locally)
+    passport.authenticate("google", { failureRedirect: "/login" }), // redirect to login route if authentication fails
+    // call-back function
+    function(req, res) {
+        // successful authentication, redirect to secrets page
+        res.redirect("/secrets"); // will trigger callback function in passport.use() - line 82
+    });
 
 // GET request for the login route
 app.get("/login", function(req, res) {
@@ -91,7 +129,7 @@ app.get("/register", function(req, res) {
 
 // GET request for the secrets route
 app.get("/secrets", function(req, res) {
-    // if user is authenticated
+    // if user is authenticated (checks for persistance of the login session)
     if (req.isAuthenticated()) {
         // reveal secrets page
         res.render("secrets");
@@ -109,33 +147,6 @@ app.get("/logout", function(req, res) {
     res.redirect("/"); // go back to home route
 });
 
-/*
-// POST request for the register route (triggers when user clicks submit in the form)
-app.post("/register", function(req, res) {
-    // use bcrypt as a hashing function and include rounds of salting 
-    bcrypt.hash(req.body.password, saltRounds, function(err, hash) { // callback for hashing
-        // create a mongoose Document for each new user based on the Model
-        const newUser =  new User({ // create a new user 
-          email: req.body.username, 
-          password: hash // req.body.password -> hash & myPlaintextPassword -> req.body.password
-        });
-        // *** during save, documents are encrypted and then signed by Mongoose ***
-        // save the document to database (save new user) 
-        newUser.save(function(err) { // add callback function to handle any errors
-            // if save is unsuccessful 
-            if (err) {
-                // log the error(s)
-                console.log(err);
-            } 
-            // if save is successful
-            else {
-                // users can only access secrets page via a successful login/registration
-                res.render("secrets"); // redirect to secrets page
-            }
-        });
-    });
-});
-*/
 
 // POST request for the register route (triggers when user clicks submit in the form)
 app.post("/register", function(req, res) {
@@ -158,38 +169,6 @@ app.post("/register", function(req, res) {
     });    
 });
 
-
-/*
-// POST request for the login route
-app.post("/login", function(req, res) {
-    // grab and store (body-parse) username/password fields from the form
-    const username = req.body.username;
-    const password = req.body.password; // hash conversion of password
-    // *** during find, documents are authenticated and then decrypted by Mongoose ***
-    // find a match between the fields entered and the ones already stores in the database
-    User.findOne({email: username}, function(err, foundUser) { // add a callback to handle any errors
-        // if there are any errors
-        if (err) {
-            console.log(err); // log the error(s)
-        }
-        // if there are no errors
-        else {
-            // if a user is found in the database
-            if(founderUser) {
-                // if the hashed user password matches the hashed password found in the database
-                // bcrypt.compare(myPlaintextPassword, hash, function(err, res)){});
-                bcrypt.compare(password, foundUser.password, function(err, result) {
-                    // if a comparison returns a positive match 
-                    if (result === true) {
-                      // authentication is successful   
-                      res.render("secrets"); // render the secrets page 
-                    }
-                });
-            }  
-        }
-    });
-});
-*/
 
 // POST request for the login route
 app.post("/login", function(req, res) {
