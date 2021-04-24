@@ -34,9 +34,9 @@ app.set('trust proxy', 1) // trust first proxy
 app.use(session({
     secret: 'A secret session',
     resave: false, // true recommended by documentation 
-    saveUninitialized: false, // // true recommended by documentation 
+    saveUninitialized: false, // true recommended by documentation 
     cookie: { secure: true }
-  }));
+}));
 
 // initialize and use passport
 app.use(passport.initialize());
