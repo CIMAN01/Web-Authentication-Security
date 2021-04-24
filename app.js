@@ -53,7 +53,7 @@ const userSchema = new mongoose.Schema ({
     email: String,
     password: String,
     googleId: String, // needed for identifying users (who logged in via google) in order to find them locally (database) 
-    secret: String
+    secret: String // needed for saving submitted secrets
 }); 
 
 // use plugin for hashing/salting passwords and storing them in the mongoose db
@@ -117,56 +117,10 @@ app.get("/auth/google/secrets",
         res.redirect("/secrets"); // will trigger callback function in passport.use() - line 82
     });
 
+
 // GET request for the login route
 app.get("/login", function(req, res) {
     res.render("login");
-});
-
-// GET request for the register route
-app.get("/register", function(req, res) {
-    res.render("register");
-});
-
-// GET request for the secrets route
-app.get("/secrets", function(req, res) {
-    // if user is authenticated (checks for persistance of the login session)
-    if (req.isAuthenticated()) {
-        // reveal secrets page
-        res.render("secrets");
-    }
-    // if user is not authenticated
-    else {
-        // make the user login first before accessing secrets page
-        res.redirect("/login"); // redirect to login route
-    }
-});
-  
-// GET request for the logout route
-app.get("/logout", function(req, res) {
-    req.logout(); // de-authenticate user and end user session by logging out 
-    res.redirect("/"); // go back to home route
-});
-
-
-// POST request for the register route (triggers when user clicks submit in the form)
-app.post("/register", function(req, res) {
-    // use Passport-Local Mongoose to register users and add a callback function to handle errors
-    User.register({username: req.body.username}, req.body.password, function(err, user) {
-        // if there are any errors
-        if (err) {
-            console.log(err); // log errors 
-            // redirect to the register route so the user can try again
-            res.redirect("/register"); 
-        }
-        // if there aren't any errors
-        else {
-            // use passport to authenticate user (authenticaton type is local)
-            passport.authenticate("local")(req, res, function() { 
-// callback is only triggered if authentication is successful (manage to set up a cookie that saves the user login session)
-                res.redirect("/secrets"); // redirect to the secrets route 
-            });
-        }
-    });    
 });
 
 
@@ -196,7 +150,105 @@ app.post("/login", function(req, res) {
 });   
 
 
+// GET request for the register route
+app.get("/register", function(req, res) {
+    res.render("register");
+});
+
+
+// POST request for the register route (triggers when user clicks submit in the form)
+app.post("/register", function(req, res) {
+    // use Passport-Local Mongoose to register users and add a callback function to handle errors
+    User.register({username: req.body.username}, req.body.password, function(err, user) {
+        // if there are any errors
+        if (err) {
+            console.log(err); // log errors 
+            // redirect to the register route so the user can try again
+            res.redirect("/register"); 
+        }
+        // if there aren't any errors
+        else {
+            // use passport to authenticate user (authenticaton type is local)
+            passport.authenticate("local")(req, res, function() { 
+// callback is only triggered if authentication is successful (manage to set up a cookie that saves the user login session)
+                res.redirect("/secrets"); // redirect to the secrets route 
+            });
+        }
+    });    
+});
+
+
+// GET request for the secrets route
+app.get("/secrets", function(req, res) {
+    // search the database (collection of users) and find all the secrets already submitted (check for secret fields that are not null) 
+    User.find({"secret": {$ne: null}}, function(err, foundUsers) { // handle errors with a callback function
+        // if there are any errors
+        if(err) {
+            console.log(err); // log the error(s)
+        } 
+        // but if no errors are found 
+        else {
+            // and if any users are found
+            if(foundUsers) {
+                // render the secrets.ejs page using the values from the found users
+                res.render("secrets", {usersWithSecrets: foundUsers}); 
+            }
+        }
+    });
+});
+  
+  
+// GET request for the submit route
+app.get("/submit", function(req, res){
+    // check if user is logged in
+    if (req.isAuthenticated()) {
+        // if user is logged in, render the submit page
+        res.render("submit");
+    } 
+    // if user is not logged in, redirect to login page
+    else {
+        res.redirect("/login");
+    }
+});
+  
+
+// POST request for the submit route 
+app.post("/submit", function(req, res) {
+    // access submit.ejs and store the secret that user submits via in form   
+    const submittedSecret = req.body.secret;
+    
+    // find the current user in database by their id and handle errors with a callback function
+    User.findById(req.user.id, function(err, foundUser) {  
+        // if there is an error
+        if(err) {
+            console.log(err); // log the error
+        } 
+        // otherwise, look for the user
+        else {
+            // if there is match
+            if(foundUser) {
+                // assign the submitted secret to the found user's secret field (part of the Schema)  
+                foundUser.secret = submittedSecret;
+                // save the found user with their newly updated secret 
+                foundUser.save(function() { // and once the save is complete 
+                    res.redirect("/secrets"); // redirect to the secrets page
+                });
+            }
+        }
+    });
+});
+
+
+// GET request for the logout route
+app.get("/logout", function(req, res) {
+    req.logout(); // de-authenticate user and end user session by logging out 
+    res.redirect("/"); // go back to home route
+});
+
+
 // port listening 
 app.listen(port, function() {
     console.log("Server started on port 3000");
 });
+
+
